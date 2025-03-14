@@ -1,294 +1,229 @@
 import sys
 import re
-import os
-
-multilineCommentMode = False
-
-identificatorLen = 20
-
-maxInt = 2 ** 31 - 1
-minInt = -2 ** 31
-
-operators = {
-    "==": "Relational operation",
-    "!=": "Relational operation",
-    "<=": "Relational operation",
-    ">=": "Relational operation",
-    "<": "Relational operation",
-    ">": "Relational operation",
-    "+": "Arithmetic operator",
-    "-": "Arithmetic operator",
-    "/": "Arithmetic operator",
-    "*": "Arithmetic operator",
-    "=": "Assignment operator",
-}
-
-separators = {
-    "(": "Parenthesis bracket",
-    ")": "Parenthesis bracket",
-    "[": "Square bracket",
-    "]": "Square bracket",
-    "{": "Curly bracket",
-    "}": "Curly bracket",
-    ":": "Colon separator",
-    ",": "Comma separator",
-    ";": "Semicolon separator",
-    ".": "Dot",
-}
-
-keywords = {
-    "and": "Keyword",
-    "as": "Keyword",
-    "break": "Keyword",
-    "class": "Keyword",
-    "continue": "Keyword",
-    "def": "Keyword",
-    "elif": "Keyword",
-    "else": "Keyword",
-    "finally": "Keyword",
-    "for": "Keyword",
-    "from": "Keyword",
-    "if": "Keyword",
-    "import": "Keyword",
-    "in": "Keyword",
-    "not": "Keyword",
-    "or": "Keyword",
-    "return": "Keyword",
-    "try": "Keyword",
-    "while": "Keyword",
-    "with": "Keyword",
-    "bool": "Keyword",
-    "int": "Keyword",
-    "char": "Keyword",
-    "string": "Keyword",
-    "str": "Keyword",
-    "true": "Keyword",
-    "false": "Keyword",
-    "double": "Keyword",
-}
-
-nums = {
-    r'\d*\.?\d+[eE][-+]?\d+\b': "Exponential number",
-    r'\d*\.\d+([eE][-+]?\d+)?\b': "Float number",
-    r'0[0-7]+\b': "Octal number",
-    r'\d+\b': "Integer number",
-    r'0b[01]+\b': "Binary number",
-    r'0x[0-9a-fA-F]+\b': "Hexadecimal number",
-}
 
 
 class Token:
-    def __init__(self, item, key, line, position):
-        self.item = item
-        self.key = key
+    def __init__(self, type_, lexeme, line, column):
+        self.type = type_
+        self.lexeme = lexeme
         self.line = line
-        self.position = position
+        self.column = column
+
+    def __str__(self):
+        return f"{self.type} ({self.line}, {self.column}) \"{self.lexeme}\""
 
 
-def isString(item):
-    return (len(item) > 1 and
-            (item.startswith("\"") and item.endswith("\"") and item.count("\"") % 2 == 0) or
-            (item.startswith("\'") and item.endswith("\'") and item.count("\'") % 2 == 0))
+class PascalLexer:
+    KEYWORDS = {
+        "array": "ARRAY",
+        "begin": "BEGIN",
+        "else": "ELSE",
+        "end": "END",
+        "if": "IF",
+        "of": "OF",
+        "or": "OR",
+        "program": "PROGRAM",
+        "procedure": "PROCEDURE",
+        "then": "THEN",
+        "type": "TYPE",
+        "var": "VAR"
+    }
 
-def processString(input_string):
-    return input_string.replace("\n", "\\n")
+    OPERATORS = {
+        "*": "MULTIPLICATION",
+        "+": "PLUS",
+        "-": "MINUS",
+        "/": "DIVIDE",
+        ";": "SEMICOLON",
+        ",": "COMMA",
+        "(": "LEFT_PAREN",
+        ")": "RIGHT_PAREN",
+        "[": "LEFT_BRACKET",
+        "]": "RIGHT_BRACKET",
+        "=": "EQ",
+        ">": "GREATER",
+        "<": "LESS",
+        "<=": "LESS_EQ",
+        ">=": "GREATER_EQ",
+        "<>": "NOT_EQ",
+        ":": "COLON",
+        ":=": "ASSIGN",
+        ".": "DOT"
+    }
 
-def isValidIdentificator(item):
-    if not (item[0].isalpha() or (item[0] == "_" and len(item) > 1)):
-        return False
+    def __init__(self, input_file):
+        self.input_file = open(input_file, 'r')
+        self.current_line = 0
+        self.current_column = 0
+        self.buffer = ""
+        self.eof = False
 
-    if len(item) > identificatorLen:
-        return False
+    def close(self):
+        self.input_file.close()
 
-    if not all(c.isdigit() or c == "_" or 'a' <= c <= 'z' or 'A' <= c <= 'Z' for c in item):
-        return False
+    def read_next_line(self):
+        self.buffer = self.input_file.readline()
 
-    return True
-
-
-def readDigit(line):
-    item = ""
-    for char in line:
-        if item == "." and not char.isdigit():
-            return item
-
-        if char != " ":
-            item += char
+        if not self.buffer:  # EOF
+            self.eof = True
+            self.buffer = ""
         else:
-            break
+            self.current_line += 1
+        self.current_column = 1
 
-    return item
+    def next_token(self):
+        while not self.eof or self.buffer:
+            if not self.buffer:
+                self.read_next_line()
+                if self.eof:
+                    return None
 
-def readString(lines, lineIdx, position):
-    quote_char = lines[lineIdx][position]
-    item = quote_char
-    position += 1
+            while self.buffer and self.buffer[0].isspace():
+                self.buffer = self.buffer[1:]
+                self.current_column += 1
 
-    while lineIdx < len(lines):
-        line = lines[lineIdx]
-        for char in line[position:]:
-            item += char
-            position += 1
+            if not self.buffer:
+                continue
 
-            if char == quote_char:
-                return item, lineIdx
+            self.current_column += len(self.buffer) - len(self.buffer.lstrip())
 
-        if position >= len(line):
-            item += '\n'
-            lineIdx += 1
-            position = 0
+            if self.buffer.startswith("//"):
+                self.buffer = ""
+                continue
 
+            if self.buffer.startswith("{"):
+                temp = ""
+                temp += self.buffer.replace("\n", "")
+                start_line = self.current_line
+                start_column = self.current_column
+                while True:
 
-    if lineIdx >= len(lines):
-        item = item[:-1]
-    return item, lineIdx
+                    end_index = self.buffer.find("}")
 
+                    if end_index != -1:
+                        self.buffer = self.buffer[end_index + 1:]
+                        self.current_column += end_index + 1
+                        break
+                    else:
+                        self.read_next_line()
+                        if self.eof:
+                            bad_token = Token("BAD", temp, start_line, start_column)
+                            self.buffer = ""
+                            return bad_token
+                        else:
+                            temp += "\n" + self.buffer.replace("\n", "")
 
-def readIdentifier(line):
-    item = ""
-    for char in line:
-        if char.isalnum() or char == "_":
-            item += char
-        else:
-            break
-    return item
+                continue
 
-
-def readOperator(line):
-    for op in sorted(operators.keys(), key=len, reverse=True):
-        if line.startswith(op):
-            return op
-    return None
-
-
-def makeToken(line, lineIdx, position):
-    global multilineCommentMode
-    global multiStringMode
-    item = ""
-
-    for i, char in enumerate(line):
-        if multilineCommentMode:
-            if char == "*" and i + 1 < len(line) and line[i + 1] == "/":
-                multilineCommentMode = False
-                return Token("*/", "MultiComment End", lineIdx, position + i)
-            else:
-                return None
-        else:
-            if char == "/":
-                if i + 1 < len(line):
-                    next_char = line[i + 1]
-                    if next_char == "/":
-                        return Token(line[i:], "Single Comment", lineIdx, position + i)
-                    elif next_char == "*":
-                        multilineCommentMode = True
-                        return Token("/*", "MultiComment Start", lineIdx, position + i)
-
-            elif char.isdigit() or char == ".":
-                item = readDigit(line[i:])
-                matched = False
-                for key, value in nums.items():
-                    if re.fullmatch(key, item):
-                        matched = True
-                        if value == "Integer number":
-                            num = int(item)
-                            if num < minInt or num > maxInt:
-                                return Token(item, "Error", lineIdx, position + i)
-                        return Token(item, value, lineIdx, position + i)
-                if not matched:
-                    if item == ".":
-                        return Token(char, separators[item], lineIdx, position + i)
-                    return Token(item, "Error", lineIdx, position + i)
-
-            elif char in ["'", '"']:
-                item = readString(line[i:])
-                if isString(item):
-                    return Token(item, "String", lineIdx, position + i)
-                return Token(item, "Error", lineIdx, position + i)
-
-            elif char.isalpha() or char == "_":
-                item = readIdentifier(line[i:])
-                if item in keywords:
-                    return Token(item, "Keyword", lineIdx, position + i)
-                if isValidIdentificator(item):
-                    return Token(item, "Identificator", lineIdx, position + i)
-                return Token(item, "Error", lineIdx, position + i)
-
-            elif char in separators:
-                return Token(char, separators[char], lineIdx, position + i)
-
-            elif char in operators or char == "!":
-                item = readOperator(line[i:])
-                if item:
-                    return Token(item, operators.get(item, "Error"), lineIdx, position + i)
-
-    return Token(item, "Error", lineIdx, position)
-
-
-def parseLine(lines, line, lineIdx, outFile, position):
-    position = position + 0
-    global multilineCommentMode
-    while position < len(line):
-        char = line[position]
-        if char != " ":
-            startLineIdx = lineIdx
-            startPosition = position
-            if char == "'" or char == '"' and not multilineCommentMode:
-                item, lineIdx = readString(lines, lineIdx, position)
-                if isString(item):
-                    token = Token(processString(item), "String", lineIdx, position)
+            if self.buffer.startswith("'"):
+                string_start = self.buffer
+                match = re.match(r"'(.*?)'", self.buffer)
+                if match:
+                    lexeme = match.group(0)
+                    token = Token("STRING", lexeme, self.current_line, self.current_column)
+                    self.buffer = self.buffer[len(lexeme):]
+                    self.current_column += len(lexeme)
+                    return token
                 else:
-                    token = Token(processString(item), "Error", lineIdx, position)
-            else:
-                token = makeToken(line[position:], lineIdx, position)
+                    string_start = string_start.replace("\n", "")
+                    bad_token = Token("BAD", string_start, self.current_line, self.current_column)
+                    self.buffer = ""
+                    return bad_token
 
-            if token is not None:
-                if token.key == "Error" or token.key == "String":
-                    outFile.write(f"{token.key}: {token.item} [{startLineIdx+1}, {startPosition}]\n")
-                elif token.item != "/*" and token.item != "*/" and token.key != "Single Comment":
-                    outFile.write(f"{token.key}: {token.item} [{token.line+1}, {token.position}]\n")
+            match = re.match(r"\d+(\.)?(\d+)?([eE][+-]?\d+)?", self.buffer)
+            if match:
+                lexeme = match.group(0)
 
-                position += len(token.item)
+                if "." in lexeme and match.group(2) is None:  # No digits after the point
+                    bad_token = Token("BAD", lexeme, self.current_line, self.current_column)
+                    self.buffer = self.buffer[len(lexeme):]
+                    self.current_column += len(lexeme)
+                    return bad_token
 
-                if token.key == "String" and token.item.rfind('\\n') != -1:
-                    position = len(token.item) - token.item.rfind('\\n') - 2
-                    parseLine(lines, lines[lineIdx], lineIdx, outFile, position)
+                if lexeme.isdigit() and len(lexeme) > 16:
+                    bad_token = Token("BAD", lexeme, self.current_line, self.current_column)
+                    self.buffer = self.buffer[len(lexeme):]
+                    self.current_column += len(lexeme)
+                    return bad_token
 
-            else:
-                position += 1
-        else:
-            position += 1
+                if len(self.buffer) > len(lexeme) and not re.match(r"[ \t\n\(\)\+\-\*/;,=\[\]{}<>'.:0-9]",
+                                                                   self.buffer[len(lexeme):][0]):
+                    match = re.match(r"[a-zA-Z0-9_]*", self.buffer)
+                    bad_token = Token("BAD", match.group(0), self.current_line, self.current_column)
+                    self.buffer = self.buffer[len(match.group(0)):]
+                    self.current_column += len(match.group(0))
+                    return bad_token
 
-    return lineIdx
+                token_type = "FLOAT" if "." in lexeme or "e" in lexeme.lower() else "INTEGER"
+                token = Token(token_type, lexeme, self.current_line, self.current_column)
+                self.buffer = self.buffer[len(lexeme):]
+                self.current_column += len(lexeme)
+                return token
 
-def lexer(inputFile, outputFile):
-    global multilineCommentMode
+            match = re.match(r"[a-zA-Z_][a-zA-Z0-9_]*", self.buffer)
+            if match:
+                lexeme = match.group(0)
 
-    with open(inputFile, "r") as inFile:
-        lines = [line.rstrip('\n') for line in inFile]
+                if len(lexeme) > 256:
+                    bad_token = Token("BAD", lexeme, self.current_line, self.current_column)
+                    self.buffer = self.buffer[len(lexeme):]
+                    self.current_column += len(lexeme)
+                    return bad_token
 
-    outFile = open(outputFile, "w")
-    if os.stat(inputFile).st_size == 0:
-        outFile.write(f"Input file is empty\n")
-        return
+                token_type = self.KEYWORDS.get(lexeme.lower(), "IDENTIFIER")
+                token = Token(token_type, lexeme, self.current_line, self.current_column)
+                self.buffer = self.buffer[len(lexeme):]
+                self.current_column += len(lexeme)
+                self.buffer = self.buffer.replace("\n", "")
 
-    lineIdx = 1
-    for i in range(0, len(lines)):
-        if lineIdx < len(lines):
-            lineIdx = parseLine(lines, lines[lineIdx].rstrip('\n'), lineIdx, outFile, 0)
-            lineIdx += 1
+                if self.buffer and not re.match(r"[ \t\(\)\+\-\*/;,=\[\]{}<>'.:]", self.buffer[0]) and not re.match(
+                        r"^[a-zA-Z0-9_]*$", self.buffer):
+                    self.current_column -= len(lexeme)
+                    bad_token = Token("BAD", lexeme + self.buffer, self.current_line, self.current_column)
+                    self.buffer = ""
+                    return bad_token
 
-    if multilineCommentMode:
-        outFile.write(f"Error: non closed multiline comment\n")
+                return token
 
-    return
+            for op, token_type in sorted(self.OPERATORS.items(), key=lambda x: -len(x[0])):
+                if self.buffer.startswith(op):
+                    token = Token(token_type, op, self.current_line, self.current_column)
+                    self.buffer = self.buffer[len(op):]
+                    self.current_column += len(op)
+                    return token
+
+            if not re.match(r"^[a-zA-Z0-9_]*$", self.buffer):
+                match = re.match(r"[^ \t\n\(\)\+\-\*/;,=\[\]{}<>'.:]*", self.buffer)
+
+                print(match.group(0))
+                self.buffer = self.buffer[len(match.group(0)):]
+                bad_token = Token("BAD", match.group(0), self.current_line, self.current_column)
+                self.current_column += len(match.group(0))
+                return bad_token
+
+        return None
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python PascalLexer.py <input_file> <output_file>")
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+
+    lexer = PascalLexer(input_file)
+
+    with open(output_file, 'w') as output:
+        while True:
+            token = lexer.next_token()
+            if token is None:
+                break
+            print(token)
+            output.write(str(token) + '\n')
+
+    lexer.close()
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Invalid arguments len")
-        sys.exit()
-
-    inputFile = sys.argv[1]
-    outputFile = sys.argv[2]
-
-    lexer(inputFile, outputFile)
+    main()
